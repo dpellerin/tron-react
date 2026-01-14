@@ -40,27 +40,11 @@ A modern, AI code assisted browser remake of the Tron lightcycle game. You play 
 
 ## Why I Built This
 
-The very first actual program I wrote was a lightcycle game on the Commodore Vic-20 back in 1982. There were no graphic routines so we had to map the keyboard characters to whatever icons we needed. It was fun drawing a lightcycle in an 8x8 bitmap. The game grid was literally a grid of characters. I can't remember but a quick search says 22 x 23 characters. So the game was extremely low res but it ran and two people could play!
+The very first actual program I wrote was a lightcycle game on the Commodore VIC-20 back in 1982. There were no graphics routines, so we had to re-map keyboard characters to whatever sprites we needed. It was fun drawing a lightcycle in an 8×8 bitmap. The game grid was literally a grid of characters. I can’t remember the exact size, but a quick search says 22×23 characters. The game was extremely low-res, but it ran, and two people could play.
 
-So today we find ourselves in an incredible moment in technology with the advancements in AI. I'm blown away by it even after all these years and so I wanted recreate that original sense of wonder and do something more than just forms and data. So I set out to build my very first program once again.
+Today, we find ourselves in an incredible moment in technology history with the advancements in AI, so I wanted to recreate that original sense of wonder and do something more than just forms and data. I set out to build my very first program once again.
 
-I gotta say, it came out so much nicer than the first one, and I (well, AI with my guidance) wrote it in just a few hours. What a world we live in. It was a fun experiment and every bit as fun as writing the first one. So mission accomplished.
-
-## Challenges & Lessons
-
-I've built a handful of apps already with AI, but mostly scripts and standard forms based apps for business. This was the first time i've written a game since that first foray into programming 40 years ago, so i've learned a few things:
-
-### AI is not taking your job (yet)
-
-People are still needed to solve problems. People still need to interpret the need and find the right solution that fits. One solution does not fit all and AI can't determine on its own what we need from it. It's not even that great at asking the right questions yet.
-
-Also, it's still time consuming. Even though it's an incredible booster of producivity, making a program that is polished and complete still takes time. No executive or business leader is going spend their time iterating over a product until it's polished. They are going to hire somebody who's detailed enough to sit with the AI and decide all the little details. Will that person write code? Not very much of it. But that brings up my next point...
-
-### Domain experts are still needed
-
-Everything about writing this app was fun and really easy, until I got to the logic behind the computer controlled player. Game logic is an area I know nothing about. Well, it turns out AI is not all that knowlegable about it either. The game was rediculously easy to beat. I gave Claude, Gemini and Codex all a shot at it and the result was miserable. And because I had no knowledge on the subject, I couldn't ask the write questions. I'm still not happy with the AI player, but it works and is "good enough". But I really believe we're always going to need smart people to come up with new and novel ways to do things.
-
-All in all it was a fun experiment! Hope you dig it.
+I’ve got to say, it came out way better than I expected, and it was completed in just a few hours. What a world we live in. It was a fun experiment and every bit as enjoyable as writing the first one. Mission accomplished.
 
 ## Development
 
