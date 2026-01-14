@@ -70,3 +70,8 @@ The app was 100% coded by Open AI Codex with my prompts. The lightcycles were ge
 npm install
 npm run dev
 ```
+
+## Deployment
+
+- The build uses a relative base path, so it works on GitHub Pages or any subdirectory host.
+- Run `npm run build` and publish the `dist/` folder.
