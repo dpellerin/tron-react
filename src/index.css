@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600&display=swap');
+
+:root {
+  font-family: 'Orbitron', 'Share Tech Mono', monospace;
+  line-height: 1.2;
+  font-weight: 400;
+  color: #e6f6ff;
+  background-color: #04060c;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #04060c;
+}
+
+button,
+select {
+  font-family: inherit;
+}
+
+select {
+  appearance: none;
+}
