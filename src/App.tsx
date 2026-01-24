@@ -194,15 +194,67 @@ function App() {
     musicRef.current?.setMode(status === 'running' ? 'play' : 'menu')
   }, [status])
 
+  useEffect(() => {
+    const handleTap = (event: TouchEvent | MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (
+        target.closest('.mobile-controller') ||
+        target.closest('.panel') ||
+        target.closest('.audio-toggle') ||
+        target.closest('.custom-select')
+      ) {
+        return
+      }
+
+      musicRef.current?.unlock()
+      sfxRef.current?.unlock()
+
+      if (status === 'running') {
+        return
+      }
+      if (status === 'paused') {
+        engineRef.current?.resume()
+        soundRef.current?.startEngines()
+        setStatus('running')
+        return
+      }
+      if (status === 'match_over') {
+        resetMatch()
+        return
+      }
+      if (status === 'idle' || status === 'round_over') {
+        startRound()
+        return
+      }
+    }
+
+    window.addEventListener('touchend', handleTap)
+    window.addEventListener('click', handleTap)
+    return () => {
+      window.removeEventListener('touchend', handleTap)
+      window.removeEventListener('click', handleTap)
+    }
+  }, [resetMatch, startRound, status])
+
+
+  const isMobile = useMemo(() => {
+    return window.matchMedia('(max-width: 820px)').matches ||
+           window.matchMedia('(pointer: coarse)').matches
+  }, [])
 
   const overlay = useMemo(() => {
     if (status === 'running') {
       return null
     }
 
+    const startText = isMobile ? 'Tap to Start' : 'Press Space to Start'
+    const nextText = isMobile ? 'Tap for next round' : 'Press Space for next round'
+    const resumeText = isMobile ? 'Tap to resume' : 'Press Space to resume'
+    const menuText = isMobile ? 'Tap to return to menu' : 'Press Space to return to menu'
+
     if (status === 'idle') {
       return {
-        title: 'Press Space to Start',
+        title: startText,
         subtitle: `First to ${roundsToWin} wins the match`,
       }
     }
@@ -216,14 +268,14 @@ function App() {
             : 'CPU Wins the Round'
       return {
         title,
-        subtitle: 'Press Space for next round',
+        subtitle: nextText,
       }
     }
 
     if (status === 'paused') {
       return {
         title: 'Paused',
-        subtitle: 'Press Space to resume',
+        subtitle: resumeText,
       }
     }
 
@@ -232,9 +284,16 @@ function App() {
 
     return {
       title: matchTitle,
-      subtitle: 'Press Space to return to menu',
+      subtitle: menuText,
     }
-  }, [roundWinner, roundsToWin, score.player, status])
+  }, [roundWinner, roundsToWin, score.player, status, isMobile])
+
+  const handleDirectionPress = useCallback((direction: Direction) => {
+    if (status !== 'running') {
+      return
+    }
+    engineRef.current?.setPlayerDirection(direction)
+  }, [status])
 
   return (
     <div className="app">
@@ -300,6 +359,11 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      <MobileController
+        onDirectionPress={handleDirectionPress}
+        disabled={status !== 'running'}
+      />
     </div>
   )
 }
@@ -446,6 +510,95 @@ function keyToDirection(code: string): Direction | null {
     default:
       return null
   }
+}
+
+type MobileControllerProps = {
+  onDirectionPress: (direction: Direction) => void
+  disabled?: boolean
+}
+
+function MobileController({ onDirectionPress, disabled = false }: MobileControllerProps) {
+  const handlePress = (direction: Direction) => {
+    if (!disabled) {
+      onDirectionPress(direction)
+    }
+  }
+
+  return (
+    <div className="mobile-controller">
+      <div className="mobile-controller__grid">
+        <div className="mobile-controller__spacer" />
+        <button
+          type="button"
+          className="mobile-controller__button mobile-controller__button--up"
+          onTouchStart={(e) => {
+            e.preventDefault()
+            handlePress('up')
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handlePress('up')
+          }}
+          disabled={disabled}
+          aria-label="Move up"
+        >
+          ▲
+        </button>
+        <div className="mobile-controller__spacer" />
+        <button
+          type="button"
+          className="mobile-controller__button mobile-controller__button--left"
+          onTouchStart={(e) => {
+            e.preventDefault()
+            handlePress('left')
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handlePress('left')
+          }}
+          disabled={disabled}
+          aria-label="Move left"
+        >
+          ◀
+        </button>
+        <div className="mobile-controller__center" />
+        <button
+          type="button"
+          className="mobile-controller__button mobile-controller__button--right"
+          onTouchStart={(e) => {
+            e.preventDefault()
+            handlePress('right')
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handlePress('right')
+          }}
+          disabled={disabled}
+          aria-label="Move right"
+        >
+          ▶
+        </button>
+        <div className="mobile-controller__spacer" />
+        <button
+          type="button"
+          className="mobile-controller__button mobile-controller__button--down"
+          onTouchStart={(e) => {
+            e.preventDefault()
+            handlePress('down')
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            handlePress('down')
+          }}
+          disabled={disabled}
+          aria-label="Move down"
+        >
+          ▼
+        </button>
+        <div className="mobile-controller__spacer" />
+      </div>
+    </div>
+  )
 }
 
 export default App
