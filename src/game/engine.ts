@@ -48,12 +48,13 @@ type PlayerState = {
 type EngineCallbacks = {
   onRoundEnd: (result: RoundResult) => void
   onTurn?: (who: 'player' | 'ai') => void
+  tuning?: Partial<EngineTuning>
 }
 
-const BASE_SPEED = 240
-const SPEED_STEP = 20
+const BASE_SPEED = 150
+const SPEED_STEP = 12
 const SPEED_INTERVAL = 5
-const MAX_SPEED = 520
+const MAX_SPEED = 350
 const TRAIL_WIDTH = 6
 const COLLISION_RADIUS = 5
 const COLLISION_TOLERANCE = 1
@@ -62,6 +63,20 @@ const GRID_STEP = 48
 const VORONOI_STEP = (TRAIL_WIDTH + COLLISION_RADIUS + COLLISION_TOLERANCE) * 2
 const CRASH_FLASH_DURATION = 0.6
 const WALL_SHRINK_DURATION = 0.9
+
+type EngineTuning = {
+  baseSpeed: number
+  speedStep: number
+  maxSpeed: number
+  gridStep: number
+}
+
+const DEFAULT_TUNING: EngineTuning = {
+  baseSpeed: BASE_SPEED,
+  speedStep: SPEED_STEP,
+  maxSpeed: MAX_SPEED,
+  gridStep: GRID_STEP,
+}
 
 const COLORS = {
   player: '#2dd4ff',
@@ -131,6 +146,7 @@ export class TronEngine {
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
   private callbacks: EngineCallbacks
+  private tuning: EngineTuning
 
   private width = 0
   private height = 0
@@ -144,7 +160,7 @@ export class TronEngine {
   private running = false
   private rafId: number | null = null
   private lastTime = 0
-  private speed = BASE_SPEED
+  private speed = 0
   private speedTimer = 0
   private aiDecisionTimer = 0
   private paused = false
@@ -167,6 +183,10 @@ export class TronEngine {
     }
     this.ctx = ctx
     this.callbacks = callbacks
+    this.tuning = {
+      ...DEFAULT_TUNING,
+      ...(callbacks.tuning ?? {}),
+    }
 
     this.player = this.createPlayer('player')
     this.ai = this.createPlayer('ai')
@@ -238,6 +258,8 @@ export class TronEngine {
   resize() {
     const rect = this.canvas.getBoundingClientRect()
     this.dpr = window.devicePixelRatio || 1
+
+    // Use the full available space
     this.width = rect.width
     this.height = rect.height
 
@@ -253,7 +275,7 @@ export class TronEngine {
   }
 
   private resetRoundState() {
-    this.speed = BASE_SPEED
+    this.speed = this.tuning.baseSpeed
     this.speedTimer = 0
     this.aiDecisionTimer = 0
     this.running = false
@@ -326,7 +348,10 @@ export class TronEngine {
     this.speedTimer += delta
     if (this.speedTimer >= SPEED_INTERVAL) {
       const steps = Math.floor(this.speedTimer / SPEED_INTERVAL)
-      this.speed = Math.min(MAX_SPEED, this.speed + steps * SPEED_STEP)
+      this.speed = Math.min(
+        this.tuning.maxSpeed,
+        this.speed + steps * this.tuning.speedStep,
+      )
       this.speedTimer -= steps * SPEED_INTERVAL
     }
 
@@ -485,15 +510,23 @@ export class TronEngine {
     ctx.lineWidth = 1
     ctx.beginPath()
 
-    for (let x = 0; x <= this.width; x += GRID_STEP) {
+    for (let x = 0; x <= this.width; x += this.tuning.gridStep) {
       ctx.moveTo(x, 0)
       ctx.lineTo(x, this.height)
     }
-    for (let y = 0; y <= this.height; y += GRID_STEP) {
+    for (let y = 0; y <= this.height; y += this.tuning.gridStep) {
       ctx.moveTo(0, y)
       ctx.lineTo(this.width, y)
     }
     ctx.stroke()
+
+    // Draw arena border
+    ctx.strokeStyle = 'rgba(45, 212, 255, 0.4)'
+    ctx.lineWidth = 3
+    ctx.shadowColor = 'rgba(45, 212, 255, 0.6)'
+    ctx.shadowBlur = 8
+    ctx.strokeRect(1.5, 1.5, this.width - 3, this.height - 3)
+    ctx.shadowBlur = 0
   }
 
   private drawTrails(player: PlayerState) {
@@ -578,7 +611,7 @@ export class TronEngine {
 
     if (player.id === 'player' && this.playerImage) {
       const img = this.playerImage
-      const scale = 0.07
+      const scale = 0.055
       const w = img.width * scale
       const h = img.height * scale
       const fadeAlpha = this.crashed[player.id] ? Math.max(0, flashAlpha) : 1
@@ -595,7 +628,7 @@ export class TronEngine {
       }
     } else if (player.id === 'ai' && this.aiImage) {
       const img = this.aiImage
-      const scale = 0.07
+      const scale = 0.055
       const w = img.width * scale
       const h = img.height * scale
       const fadeAlpha = this.crashed[player.id] ? Math.max(0, flashAlpha) : 1
@@ -613,9 +646,9 @@ export class TronEngine {
     } else {
       ctx.fillStyle = player.color
       ctx.beginPath()
-      ctx.moveTo(16, 0)
-      ctx.lineTo(-12, -8)
-      ctx.lineTo(-12, 8)
+      ctx.moveTo(13, 0)
+      ctx.lineTo(-10, -7)
+      ctx.lineTo(-10, 7)
       ctx.closePath()
       ctx.fill()
       if (flashAlpha > 0) {
@@ -623,9 +656,9 @@ export class TronEngine {
         ctx.globalCompositeOperation = 'screen'
         ctx.fillStyle = '#ffffff'
         ctx.beginPath()
-        ctx.moveTo(16, 0)
-        ctx.lineTo(-12, -8)
-        ctx.lineTo(-12, 8)
+        ctx.moveTo(13, 0)
+        ctx.lineTo(-10, -7)
+        ctx.lineTo(-10, 7)
         ctx.closePath()
         ctx.fill()
         ctx.globalCompositeOperation = 'source-over'
