@@ -18,11 +18,17 @@ html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
   background: #04060c;
+  position: fixed;
+  width: 100%;
+  height: 100vh;
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
 }
 
 button,

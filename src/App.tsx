@@ -93,11 +93,18 @@ function App() {
       return
     }
 
+    const isMobileDevice =
+      window.matchMedia('(max-width: 820px)').matches ||
+      window.matchMedia('(pointer: coarse)').matches
+
     const engine = new TronEngine(canvas, {
       onRoundEnd: handleRoundEnd,
       onTurn: (who) => {
         soundRef.current?.resetRamp(who)
       },
+      tuning: isMobileDevice
+        ? { baseSpeed: 125, speedStep: 10, maxSpeed: 300, gridStep: 32 }
+        : { baseSpeed: 165, speedStep: 13.2, maxSpeed: 385, gridStep: 48 },
     })
     engineRef.current = engine
     soundRef.current = new SoundEngine()
@@ -169,6 +176,12 @@ function App() {
         return
       }
 
+      if (event.code === 'KeyR') {
+        event.preventDefault()
+        resetMatch()
+        return
+      }
+
       if (event.code === 'Escape') {
         event.preventDefault()
         resetMatch()
@@ -194,52 +207,22 @@ function App() {
     musicRef.current?.setMode(status === 'running' ? 'play' : 'menu')
   }, [status])
 
+  const [isMobile, setIsMobile] = useState(() => {
+    return (
+      window.matchMedia('(max-width: 820px)').matches ||
+      window.matchMedia('(pointer: coarse)').matches
+    )
+  })
+
   useEffect(() => {
-    const handleTap = (event: TouchEvent | MouseEvent) => {
-      const target = event.target as HTMLElement
-      if (
-        target.closest('.mobile-controller') ||
-        target.closest('.panel') ||
-        target.closest('.audio-toggle') ||
-        target.closest('.custom-select')
-      ) {
-        return
-      }
-
-      musicRef.current?.unlock()
-      sfxRef.current?.unlock()
-
-      if (status === 'running') {
-        return
-      }
-      if (status === 'paused') {
-        engineRef.current?.resume()
-        soundRef.current?.startEngines()
-        setStatus('running')
-        return
-      }
-      if (status === 'match_over') {
-        resetMatch()
-        return
-      }
-      if (status === 'idle' || status === 'round_over') {
-        startRound()
-        return
-      }
+    const media = window.matchMedia('(max-width: 820px), (pointer: coarse)')
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobile(event.matches)
     }
-
-    window.addEventListener('touchend', handleTap)
-    window.addEventListener('click', handleTap)
+    media.addEventListener('change', handleChange)
     return () => {
-      window.removeEventListener('touchend', handleTap)
-      window.removeEventListener('click', handleTap)
+      media.removeEventListener('change', handleChange)
     }
-  }, [resetMatch, startRound, status])
-
-
-  const isMobile = useMemo(() => {
-    return window.matchMedia('(max-width: 820px)').matches ||
-           window.matchMedia('(pointer: coarse)').matches
   }, [])
 
   const overlay = useMemo(() => {
@@ -247,10 +230,10 @@ function App() {
       return null
     }
 
-    const startText = isMobile ? 'Tap to Start' : 'Press Space to Start'
-    const nextText = isMobile ? 'Tap for next round' : 'Press Space for next round'
-    const resumeText = isMobile ? 'Tap to resume' : 'Press Space to resume'
-    const menuText = isMobile ? 'Tap to return to menu' : 'Press Space to return to menu'
+    const startText = isMobile ? 'Press Start' : 'Press Space or Start'
+    const nextText = isMobile ? 'Next round' : 'Press Space or Next'
+    const resumeText = isMobile ? 'Resume' : 'Press Space or Resume'
+    const menuText = isMobile ? 'New match' : 'Press Space or New Match'
 
     if (status === 'idle') {
       return {
@@ -288,6 +271,25 @@ function App() {
     }
   }, [roundWinner, roundsToWin, score.player, status, isMobile])
 
+  const handleOverlayAction = useCallback(() => {
+    musicRef.current?.unlock()
+    sfxRef.current?.unlock()
+
+    if (status === 'paused') {
+      engineRef.current?.resume()
+      soundRef.current?.startEngines()
+      setStatus('running')
+      return
+    }
+    if (status === 'match_over') {
+      resetMatch()
+      return
+    }
+    if (status === 'idle' || status === 'round_over') {
+      startRound()
+    }
+  }, [resetMatch, startRound, status])
+
   const handleDirectionPress = useCallback((direction: Direction) => {
     if (status !== 'running') {
       return
@@ -301,53 +303,90 @@ function App() {
 
       <div className="hud">
         <div className="score score-player">Human: {score.player}</div>
+        <div className="hud-controls">
+          <button
+            type="button"
+            className="audio-toggle"
+            onClick={() => setIsMuted((prev) => !prev)}
+            aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
+          >
+            {isMuted ? '🔇' : '🔊'}
+          </button>
+
+        <button
+          type="button"
+          className="reset-button"
+          onClick={resetMatch}
+          aria-label="Reset match"
+          title="Reset match"
+          disabled={status === 'idle'}
+        >
+          <span className="reset-button__icon" aria-hidden>
+            ⟳
+          </span>
+        </button>
+        </div>
         <div className="score score-ai">Computer: {score.ai}</div>
       </div>
 
-      <button
-        type="button"
-        className="audio-toggle"
-        onClick={() => setIsMuted((prev) => !prev)}
-        aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
-      >
-        {isMuted ? '🔇' : '🔊'}
-      </button>
-
-      {status !== 'running' ? (
+      {status === 'idle' ? (
         <div className="panel">
-          <div className="settings">
-            <label>
-              Rounds to win
-              <CustomSelect
-                value={roundsToWin}
-                options={ROUND_OPTIONS.map((value) => ({
-                  value,
-                  label: String(value),
-                }))}
-                onChange={(value) => setRoundsToWin(Number(value))}
-                disabled={status !== 'idle'}
-                ariaLabel="Rounds to win"
-              />
-            </label>
+          {status === 'idle' ? (
+            <>
+              <div className="settings">
+                <label>
+                  Rounds to win
+                  <CustomSelect
+                    value={roundsToWin}
+                    options={ROUND_OPTIONS.map((value) => ({
+                      value,
+                      label: String(value),
+                    }))}
+                    onChange={(value) => setRoundsToWin(Number(value))}
+                    disabled={status !== 'idle'}
+                    ariaLabel="Rounds to win"
+                  />
+                </label>
 
-            <label>
-              Difficulty
-              <CustomSelect
-                value={difficulty}
-                options={DIFFICULTY_OPTIONS.map((value) => ({
-                  value,
-                  label: value,
-                }))}
-                onChange={(value) => setDifficulty(value as Difficulty)}
-                disabled={status !== 'idle'}
-                ariaLabel="Difficulty"
-              />
-            </label>
-          </div>
+                <label>
+                  Difficulty
+                  <CustomSelect
+                    value={difficulty}
+                    options={DIFFICULTY_OPTIONS.map((value) => ({
+                      value,
+                      label: value,
+                    }))}
+                    onChange={(value) => setDifficulty(value as Difficulty)}
+                    disabled={status !== 'idle'}
+                    ariaLabel="Difficulty"
+                  />
+                </label>
+              </div>
 
-          <div className="controls">
-            WASD / Arrows to turn · Space to start/pause · Esc to menu · M to mute
-          </div>
+              {!isMobile ? (
+                <div className="controls">
+                  <span>WASD / Arrows to turn</span>
+                  <span className="controls__divider" aria-hidden>
+                    ·
+                  </span>
+                  <span>Space to start/pause</span>
+                  <span className="controls__divider" aria-hidden>
+                    ·
+                  </span>
+                  <span>Esc to menu</span>
+                  <span className="controls__divider" aria-hidden>
+                    ·
+                  </span>
+                  <span>M to mute</span>
+                  <span className="controls__divider" aria-hidden>
+                    ·
+                  </span>
+                  <span>R to reset</span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
         </div>
       ) : null}
 
@@ -356,9 +395,29 @@ function App() {
           <div className={`overlay-card${status === 'match_over' ? ' overlay-card--win' : ''}`}>
             <div className="overlay-title">{overlay.title}</div>
             <div className="overlay-subtitle">{overlay.subtitle}</div>
+            <button
+              type="button"
+              className="overlay-action"
+              onClick={handleOverlayAction}
+            >
+              {status === 'paused'
+                ? 'Resume'
+                : status === 'match_over'
+                  ? 'New Match'
+                  : status === 'round_over'
+                    ? 'Next Round'
+                    : 'Start'}
+            </button>
           </div>
         </div>
       ) : null}
+
+      <div className="orientation-lock" aria-live="polite" aria-hidden>
+        <div className="orientation-lock__card">
+          <div className="orientation-lock__title">Rotate your device</div>
+          <div className="orientation-lock__subtitle">Please use portrait mode to play.</div>
+        </div>
+      </div>
 
       <MobileController
         onDirectionPress={handleDirectionPress}
@@ -526,8 +585,7 @@ function MobileController({ onDirectionPress, disabled = false }: MobileControll
 
   return (
     <div className="mobile-controller">
-      <div className="mobile-controller__grid">
-        <div className="mobile-controller__spacer" />
+      <div className="mobile-controller__pad">
         <button
           type="button"
           className="mobile-controller__button mobile-controller__button--up"
@@ -544,7 +602,6 @@ function MobileController({ onDirectionPress, disabled = false }: MobileControll
         >
           ▲
         </button>
-        <div className="mobile-controller__spacer" />
         <button
           type="button"
           className="mobile-controller__button mobile-controller__button--left"
@@ -561,7 +618,7 @@ function MobileController({ onDirectionPress, disabled = false }: MobileControll
         >
           ◀
         </button>
-        <div className="mobile-controller__center" />
+        <span className="mobile-controller__center" aria-hidden />
         <button
           type="button"
           className="mobile-controller__button mobile-controller__button--right"
@@ -578,7 +635,6 @@ function MobileController({ onDirectionPress, disabled = false }: MobileControll
         >
           ▶
         </button>
-        <div className="mobile-controller__spacer" />
         <button
           type="button"
           className="mobile-controller__button mobile-controller__button--down"
@@ -595,7 +651,6 @@ function MobileController({ onDirectionPress, disabled = false }: MobileControll
         >
           ▼
         </button>
-        <div className="mobile-controller__spacer" />
       </div>
     </div>
   )
