@@ -1,0 +1,23 @@
+@media (min-width: 821px) {
+  :root {
+    --hud-top: clamp(16px, 3vh, 36px);
+    --hud-side: clamp(16px, 3vw, 40px);
+    --hud-height: clamp(34px, 6vh, 60px);
+    --hud-gap: clamp(8px, 1.5vh, 16px);
+    --overlay-top: calc(var(--game-top) + clamp(8px, 1.5vh, 16px));
+    --panel-bottom: clamp(16px, 3vh, 40px);
+    --panel-gap: clamp(10px, 2vh, 22px);
+    --desktop-edge: clamp(16px, 2.5vw, 36px);
+    --game-aspect: 1.6;
+    --game-top: calc(var(--hud-top) + var(--hud-height) + var(--hud-gap));
+    --game-bottom: var(--panel-bottom);
+    --game-area-height: calc(100vh - var(--game-top) - var(--game-bottom));
+    --game-max-width: calc(100vw - (var(--desktop-edge) * 2));
+    --game-max-height: var(--game-area-height);
+    --game-width: var(--game-max-width);
+    --game-height: var(--game-max-height);
+    --panel-max-width: calc(var(--game-width) - clamp(16px, 4vw, 40px));
+    --panel-width: min(88vw, var(--panel-max-width));
+    --panel-min-width: clamp(220px, 50vw, 360px);
+  }
+}
