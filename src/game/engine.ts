@@ -64,7 +64,7 @@ const VORONOI_STEP = (TRAIL_WIDTH + COLLISION_RADIUS + COLLISION_TOLERANCE) * 2
 const CRASH_FLASH_DURATION = 0.6
 const WALL_SHRINK_DURATION = 0.9
 
-type EngineTuning = {
+export type EngineTuning = {
   baseSpeed: number
   speedStep: number
   maxSpeed: number
