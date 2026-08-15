@@ -1,18 +1,14 @@
-import type { GridState } from './types'
+import { chooseAiDirection, DIFFICULTY_CONFIG, type Difficulty } from './ai'
+import {
+  distance,
+  pointHitsSegments,
+  type Segment,
+  type Vec,
+} from './collision'
 
-export type Difficulty = 'easy' | 'normal' | 'hard'
+export type { Difficulty }
 export type RoundResult = 'player' | 'ai' | 'tie'
 export type Direction = 'up' | 'down' | 'left' | 'right'
-
-type Vec = {
-  x: number
-  y: number
-}
-
-type Segment = {
-  a: Vec
-  b: Vec
-}
 
 type Particle = {
   pos: Vec
@@ -60,7 +56,6 @@ const COLLISION_RADIUS = 5
 const COLLISION_TOLERANCE = 1
 const SPAWN_PADDING = 80
 const GRID_STEP = 48
-const VORONOI_STEP = (TRAIL_WIDTH + COLLISION_RADIUS + COLLISION_TOLERANCE) * 2
 const CRASH_FLASH_DURATION = 0.6
 const WALL_SHRINK_DURATION = 0.9
 
@@ -81,58 +76,6 @@ const DEFAULT_TUNING: EngineTuning = {
 const COLORS = {
   player: '#2dd4ff',
   ai: '#ffb347',
-}
-
-type DifficultyConfig = {
-  decisionInterval: number
-  sampleStep: number
-  lookahead: number
-  aggression: number
-  caution: number
-  randomness: number
-  interceptHorizon: number
-  simHorizon: number
-  minTurnBenefit: number
-  minShortClear: number
-}
-
-const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
-  easy: {
-    decisionInterval: 0.20,
-    sampleStep: 12,
-    lookahead: 450,
-    aggression: 0.2,
-    caution: 1.3,
-    randomness: 0.02,
-    interceptHorizon: 0.3,
-    simHorizon: 300,
-    minTurnBenefit: 0.02,
-    minShortClear: 6,
-  },
-  normal: {
-    decisionInterval: 0.10,
-    sampleStep: 8,
-    lookahead: 900,
-    aggression: 0.8,
-    caution: 1.5,
-    randomness: 0.0,
-    interceptHorizon: 0.7,
-    simHorizon: 600,
-    minTurnBenefit: 0.08,
-    minShortClear: 8,
-  },
-  hard: {
-    decisionInterval: 0.05,
-    sampleStep: 6,
-    lookahead: 1400,
-    aggression: 1.2,
-    caution: 1.6,
-    randomness: 0.0,
-    interceptHorizon: 1.0,
-    simHorizon: 900,
-    minTurnBenefit: 0.05,
-    minShortClear: 10,
-  },
 }
 
 const DIRECTION_VECTORS: Record<Direction, Vec> = {
@@ -165,7 +108,6 @@ export class TronEngine {
   private aiDecisionTimer = 0
   private paused = false
   private explosions: Explosion[] = []
-  private aiDistanceSinceTurn = 0
   private crashTimers: Record<'player' | 'ai', number> = { player: 0, ai: 0 }
   private crashed: Record<'player' | 'ai', boolean> = { player: false, ai: false }
   private wallShrink: Record<'player' | 'ai', { delay: number; progress: number; active: boolean }> = {
@@ -358,7 +300,6 @@ export class TronEngine {
     this.updateAI(delta)
 
     const moveDistance = this.speed * delta
-    this.aiDistanceSinceTurn += moveDistance
     const nextPlayerPos = {
       x: this.player.pos.x + this.player.dir.x * moveDistance,
       y: this.player.pos.y + this.player.dir.y * moveDistance,
@@ -407,19 +348,24 @@ export class TronEngine {
     const config = DIFFICULTY_CONFIG[this.difficulty]
     this.aiDecisionTimer = config.decisionInterval
 
-    const chosen = this.decideAiDirection(config)
+    const chosen = chooseAiDirection(
+      {
+        width: this.width,
+        height: this.height,
+        speed: this.speed,
+        ai: this.ai,
+        player: this.player,
+        wouldCollide: (point) => this.checkCollision(point, this.ai, this.player),
+      },
+      config,
+    )
     if (chosen && !isSameDirection(this.ai.dir, chosen)) {
       this.applyDirection(this.ai, { ...chosen })
     }
   }
 
-  private checkCollision(
-    point: Vec,
-    self: PlayerState,
-    other: PlayerState,
-    inflate: number = 0,
-  ) {
-    const radius = COLLISION_RADIUS + COLLISION_TOLERANCE + inflate
+  private checkCollision(point: Vec, self: PlayerState, other: PlayerState) {
+    const radius = COLLISION_RADIUS + COLLISION_TOLERANCE
 
     if (
       point.x <= radius ||
@@ -430,27 +376,17 @@ export class TronEngine {
       return true
     }
 
-    if (this.pointHitsSegments(point, other.segments, radius)) {
+    if (pointHitsSegments(point, other.segments, radius)) {
       return true
     }
 
     if (self.segments.length > 2) {
       const selfSegments = self.segments.slice(0, -2) // ignore current growing + most recent completed turn
-      if (this.pointHitsSegments(point, selfSegments, radius)) {
+      if (pointHitsSegments(point, selfSegments, radius)) {
         return true
       }
     }
 
-    return false
-  }
-
-  private pointHitsSegments(point: Vec, segments: Segment[], radius: number) {
-    for (const segment of segments) {
-      const distanceToSegment = distancePointToSegment(point, segment.a, segment.b)
-      if (distanceToSegment <= radius) {
-        return true
-      }
-    }
     return false
   }
 
@@ -460,9 +396,6 @@ export class TronEngine {
       a: { ...player.pos },
       b: { ...player.pos },
     })
-    if (player.id === 'ai') {
-      this.aiDistanceSinceTurn = 0
-    }
     this.callbacks.onTurn?.(player.id)
   }
 
@@ -716,235 +649,6 @@ export class TronEngine {
     )
   }
 
-  private decideAiDirection(config: DifficultyConfig): Vec | null {
-    const cellSize = VORONOI_STEP
-    const gridW = Math.max(4, Math.floor(this.width / cellSize))
-    const gridH = Math.max(4, Math.floor(this.height / cellSize))
-
-    const occupied = this.buildOccupiedGrid(gridW, gridH, cellSize)
-    const aiState = {
-      x: Math.floor(this.ai.pos.x / cellSize),
-      y: Math.floor(this.ai.pos.y / cellSize),
-      dir: this.vectorToGridDir(this.ai.dir),
-    }
-    const playerState = {
-      x: Math.floor(this.player.pos.x / cellSize),
-      y: Math.floor(this.player.pos.y / cellSize),
-      dir: this.vectorToGridDir(this.player.dir),
-    }
-
-    const moves = this.getGridMoves(aiState.dir)
-    const minShort = config.minShortClear
-    const minTurnDistance =
-      120 + this.speed * 0.25 * (this.difficulty === 'hard' ? 1.0 : this.difficulty === 'normal' ? 0.9 : 0.8)
-    const turnCooldown = this.aiDistanceSinceTurn < minTurnDistance
-
-    let bestDir: Vec | null = null
-    let bestScore = -Infinity
-
-    for (const move of moves) {
-      const nextAi = this.applyGridMove(aiState, move, new Set(occupied), gridW, gridH)
-      if (nextAi.dead) {
-        continue
-      }
-      const shortClear = this.gridClearance(nextAi, gridW, gridH, occupied, minShort)
-      if (shortClear < 2) {
-        continue
-      }
-      const vor = this.gridVoronoiDiff(nextAi, playerState, occupied, gridW, gridH)
-      const mob = this.gridMovesCount(nextAi, occupied, gridW, gridH)
-      const score = vor * 2.5 + mob * 0.5 + shortClear * 0.3
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = move
-      }
-    }
-
-    // Strong forward bias if safe and within cooldown
-    if (turnCooldown) {
-      const forward = moves[0]
-      if (bestDir && this.isSameGridDir(forward, bestDir)) {
-        return this.gridDirToVec(bestDir)
-      }
-      const forwardState = this.applyGridMove(aiState, forward, new Set(occupied), gridW, gridH)
-      const forwardShort = this.gridClearance(forwardState, gridW, gridH, occupied, minShort)
-      if (!forwardState.dead && forwardShort >= 2) {
-        return this.gridDirToVec(forward)
-      }
-    }
-
-    return bestDir ? this.gridDirToVec(bestDir) : null
-  }
-
-  private gridVoronoiDiff(ai: GridState, player: GridState, occupied: Set<string>, w: number, h: number) {
-    type Owner = 'ai' | 'player' | 'neutral'
-    const states = new Map<string, Owner>()
-    const queue: Array<{ x: number; y: number; owner: Owner }> = [
-      { x: ai.x, y: ai.y, owner: 'ai' },
-      { x: player.x, y: player.y, owner: 'player' },
-    ]
-
-    const encode = (x: number, y: number) => `${x}:${y}`
-    const inBounds = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h
-
-    while (queue.length) {
-      const current = queue.shift()!
-      const key = encode(current.x, current.y)
-      if (states.has(key)) {
-        const existing = states.get(key)!
-        if (existing !== current.owner) {
-          states.set(key, 'neutral')
-        }
-        continue
-      }
-      states.set(key, current.owner)
-
-      const neighbors = [
-        { x: current.x + 1, y: current.y },
-        { x: current.x - 1, y: current.y },
-        { x: current.x, y: current.y + 1 },
-        { x: current.x, y: current.y - 1 },
-      ]
-      for (const n of neighbors) {
-        if (!inBounds(n.x, n.y)) continue
-        if (occupied.has(encode(n.x, n.y))) continue
-        queue.push({ ...n, owner: current.owner })
-      }
-    }
-
-    let aiOwned = 0
-    let playerOwned = 0
-    for (const v of states.values()) {
-      if (v === 'ai') aiOwned += 1
-      else if (v === 'player') playerOwned += 1
-    }
-    return aiOwned - playerOwned
-  }
-
-  private gridClearance(state: GridState, w: number, h: number, occupied: Set<string>, maxSteps: number) {
-    const encode = (x: number, y: number) => `${x}:${y}`
-    let pos = { x: state.x, y: state.y }
-    let steps = 0
-    while (steps < maxSteps) {
-      const next = { x: pos.x + state.dir.x, y: pos.y + state.dir.y }
-      if (next.x < 0 || next.y < 0 || next.x >= w || next.y >= h) {
-        break
-      }
-      if (occupied.has(encode(next.x, next.y))) {
-        break
-      }
-      pos = next
-      steps += 1
-    }
-    return steps
-  }
-
-  private buildOccupiedGrid(w: number, h: number, cellSize: number) {
-    const occupied = new Set<string>()
-    const encode = (x: number, y: number) => `${x}:${y}`
-
-    const markSegment = (a: Vec, b: Vec) => {
-      const ax = Math.floor(a.x / cellSize)
-      const ay = Math.floor(a.y / cellSize)
-      const bx = Math.floor(b.x / cellSize)
-      const by = Math.floor(b.y / cellSize)
-      const dx = Math.abs(bx - ax)
-      const dy = -Math.abs(by - ay)
-      const sx = ax < bx ? 1 : -1
-      const sy = ay < by ? 1 : -1
-      let err = dx + dy
-      let x = ax
-      let y = ay
-      while (true) {
-        if (x >= 0 && y >= 0 && x < w && y < h) {
-          occupied.add(encode(x, y))
-        }
-        if (x === bx && y === by) break
-        const e2 = 2 * err
-        if (e2 >= dy) {
-          err += dy
-          x += sx
-        }
-        if (e2 <= dx) {
-          err += dx
-          y += sy
-        }
-      }
-    }
-
-    const markSegments = (segments: Segment[]) => {
-      for (const seg of segments) {
-        markSegment(seg.a, seg.b)
-      }
-    }
-
-    markSegments(this.player.segments)
-    markSegments(this.ai.segments)
-
-    return occupied
-  }
-
-  private applyGridMove(state: GridState, dir: Vec, occupied?: Set<string>, w?: number, h?: number): GridState {
-    const encode = (x: number, y: number) => `${x}:${y}`
-    const next = {
-      x: state.x + dir.x,
-      y: state.y + dir.y,
-      dir,
-      dead: state.dead,
-    }
-    if (occupied && w !== undefined && h !== undefined) {
-      if (next.x < 0 || next.y < 0 || next.x >= w || next.y >= h) {
-        next.dead = true
-        return next
-      }
-      if (occupied.has(encode(next.x, next.y))) {
-        next.dead = true
-        return next
-      }
-      occupied.add(encode(next.x, next.y))
-    }
-    return next
-  }
-
-  private getGridMoves(dir: Vec) {
-    if (dir.x === 1) return [dir, { x: 0, y: -1 }, { x: 0, y: 1 }]
-    if (dir.x === -1) return [dir, { x: 0, y: 1 }, { x: 0, y: -1 }]
-    if (dir.y === 1) return [dir, { x: 1, y: 0 }, { x: -1, y: 0 }]
-    return [dir, { x: -1, y: 0 }, { x: 1, y: 0 }]
-  }
-
-  private isSameGridDir(a: Vec, b: Vec) {
-    return a.x === b.x && a.y === b.y
-  }
-
-  private gridDirToVec(dir: Vec): Vec {
-    if (dir.x === 1) return DIRECTION_VECTORS.right
-    if (dir.x === -1) return DIRECTION_VECTORS.left
-    if (dir.y === 1) return DIRECTION_VECTORS.down
-    return DIRECTION_VECTORS.up
-  }
-
-  private vectorToGridDir(dir: Vec): Vec {
-    if (dir.x === 1) return { x: 1, y: 0 }
-    if (dir.x === -1) return { x: -1, y: 0 }
-    if (dir.y === 1) return { x: 0, y: 1 }
-    return { x: 0, y: -1 }
-  }
-
-  private gridMovesCount(state: GridState, occupied: Set<string>, w: number, h: number) {
-    const moves = this.getGridMoves(state.dir)
-    const encode = (x: number, y: number) => `${x}:${y}`
-    let count = 0
-    for (const m of moves) {
-      const nx = state.x + m.x
-      const ny = state.y + m.y
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
-      if (occupied.has(encode(nx, ny))) continue
-      count += 1
-    }
-    return count
-  }
-
   private drawExplosions() {
     if (this.explosions.length === 0) {
       return
@@ -993,27 +697,6 @@ function isOpposite(a: Vec, b: Vec) {
 
 function isSameDirection(a: Vec, b: Vec) {
   return a.x === b.x && a.y === b.y
-}
-
-function distance(a: Vec, b: Vec) {
-  return Math.hypot(a.x - b.x, a.y - b.y)
-}
-
-function distancePointToSegment(p: Vec, a: Vec, b: Vec) {
-  const abx = b.x - a.x
-  const aby = b.y - a.y
-  const apx = p.x - a.x
-  const apy = p.y - a.y
-  const abLenSq = abx * abx + aby * aby
-
-  if (abLenSq === 0) {
-    return Math.hypot(apx, apy)
-  }
-
-  let t = (apx * abx + apy * aby) / abLenSq
-  t = Math.max(0, Math.min(1, t))
-  const closest = { x: a.x + abx * t, y: a.y + aby * t }
-  return distance(p, closest)
 }
 
 function vectorToAngle(dir: Vec) {
