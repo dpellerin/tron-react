@@ -27,6 +27,7 @@ export function useGameEngine({
   const soundRef = useRef<SoundEngine | null>(null)
   const musicRef = useRef<MusicController | null>(null)
   const sfxRef = useRef<SfxController | null>(null)
+  const initialTuningRef = useRef(isMobile ? MOBILE_TUNING : DESKTOP_TUNING)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -43,7 +44,7 @@ export function useGameEngine({
       onTurn: (who) => {
         soundRef.current?.resetRamp(who)
       },
-      tuning: isMobile ? MOBILE_TUNING : DESKTOP_TUNING,
+      tuning: initialTuningRef.current,
     })
     engineRef.current = engine
     soundRef.current = new SoundEngine()
@@ -54,9 +55,13 @@ export function useGameEngine({
       engine.resize()
     }
 
+    const observer = new ResizeObserver(handleResize)
+    observer.observe(canvas)
     window.addEventListener('resize', handleResize)
+    requestAnimationFrame(handleResize)
 
     return () => {
+      observer.disconnect()
       window.removeEventListener('resize', handleResize)
       engine.destroy()
       soundRef.current?.destroy()
@@ -67,7 +72,11 @@ export function useGameEngine({
       sfxRef.current = null
       engineRef.current = null
     }
-  }, [canvasRef, onRoundEnd, isMobile])
+  }, [canvasRef, onRoundEnd])
+
+  useEffect(() => {
+    engineRef.current?.setTuning(isMobile ? MOBILE_TUNING : DESKTOP_TUNING)
+  }, [isMobile])
 
   useEffect(() => {
     engineRef.current?.setDifficulty(difficulty)

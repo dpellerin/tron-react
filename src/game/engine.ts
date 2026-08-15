@@ -58,6 +58,7 @@ const SPAWN_PADDING = 80
 const GRID_STEP = 48
 const CRASH_FLASH_DURATION = 0.6
 const WALL_SHRINK_DURATION = 0.9
+const MAX_MOVE_STEP = COLLISION_RADIUS + COLLISION_TOLERANCE
 
 export type EngineTuning = {
   baseSpeed: number
@@ -90,10 +91,12 @@ export class TronEngine {
   private ctx: CanvasRenderingContext2D
   private callbacks: EngineCallbacks
   private tuning: EngineTuning
+  private desiredTuning: EngineTuning
 
   private width = 0
   private height = 0
   private dpr = 1
+  private arenaLocked = false
 
   private player: PlayerState
   private ai: PlayerState
@@ -129,6 +132,7 @@ export class TronEngine {
       ...DEFAULT_TUNING,
       ...(callbacks.tuning ?? {}),
     }
+    this.desiredTuning = { ...this.tuning }
 
     this.player = this.createPlayer('player')
     this.ai = this.createPlayer('ai')
@@ -154,14 +158,19 @@ export class TronEngine {
   }
 
   startRound() {
+    this.unlockArena()
+    this.applyLayout()
+    this.tuning = { ...this.desiredTuning }
     this.resetRoundState()
+    this.lockArena()
     this.running = true
     this.paused = false
   }
 
   reset() {
-    this.running = false
-    this.paused = false
+    this.unlockArena()
+    this.applyLayout()
+    this.tuning = { ...this.desiredTuning }
     this.resetRoundState()
   }
 
@@ -181,6 +190,16 @@ export class TronEngine {
     this.difficulty = level
   }
 
+  setTuning(tuning: Partial<EngineTuning>) {
+    this.desiredTuning = {
+      ...this.desiredTuning,
+      ...tuning,
+    }
+    if (!this.arenaLocked) {
+      this.tuning = { ...this.desiredTuning }
+    }
+  }
+
   setPlayerDirection(direction: Direction) {
     if (!this.running) {
       return
@@ -198,16 +217,50 @@ export class TronEngine {
   }
 
   resize() {
+    if (this.arenaLocked) {
+      return
+    }
+    if (this.applyLayout()) {
+      this.resetRoundState()
+    }
+  }
+
+  private applyLayout() {
     const rect = this.canvas.getBoundingClientRect()
-    this.dpr = window.devicePixelRatio || 1
+    const width = rect.width
+    const height = rect.height
+    if (width < 2 || height < 2) {
+      return false
+    }
 
-    // Use the full available space
-    this.width = rect.width
-    this.height = rect.height
+    const dpr = window.devicePixelRatio || 1
+    const sameSize =
+      Math.abs(width - this.width) < 0.5 &&
+      Math.abs(height - this.height) < 0.5 &&
+      dpr === this.dpr
+    if (sameSize && this.canvas.width > 0 && this.canvas.height > 0) {
+      return false
+    }
 
-    this.canvas.width = Math.floor(this.width * this.dpr)
-    this.canvas.height = Math.floor(this.height * this.dpr)
-    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    this.width = width
+    this.height = height
+    this.dpr = dpr
+    this.canvas.width = Math.max(1, Math.floor(width * dpr))
+    this.canvas.height = Math.max(1, Math.floor(height * dpr))
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    return true
+  }
+
+  private lockArena() {
+    this.arenaLocked = true
+    this.canvas.style.width = `${this.width}px`
+    this.canvas.style.height = `${this.height}px`
+  }
+
+  private unlockArena() {
+    this.arenaLocked = false
+    this.canvas.style.width = ''
+    this.canvas.style.height = ''
   }
 
   destroy() {
@@ -300,42 +353,52 @@ export class TronEngine {
     this.updateAI(delta)
 
     const moveDistance = this.speed * delta
-    const nextPlayerPos = {
-      x: this.player.pos.x + this.player.dir.x * moveDistance,
-      y: this.player.pos.y + this.player.dir.y * moveDistance,
-    }
-    const nextAiPos = {
-      x: this.ai.pos.x + this.ai.dir.x * moveDistance,
-      y: this.ai.pos.y + this.ai.dir.y * moveDistance,
-    }
+    const steps = Math.max(1, Math.ceil(moveDistance / MAX_MOVE_STEP))
+    const stepDistance = moveDistance / steps
 
-    this.extendSegment(this.player, nextPlayerPos)
-    this.extendSegment(this.ai, nextAiPos)
+    for (let i = 0; i < steps; i += 1) {
+      const nextPlayerPos = {
+        x: this.player.pos.x + this.player.dir.x * stepDistance,
+        y: this.player.pos.y + this.player.dir.y * stepDistance,
+      }
+      const nextAiPos = {
+        x: this.ai.pos.x + this.ai.dir.x * stepDistance,
+        y: this.ai.pos.y + this.ai.dir.y * stepDistance,
+      }
 
-    const playerHit = this.checkCollision(nextPlayerPos, this.player, this.ai)
-    const aiHit = this.checkCollision(nextAiPos, this.ai, this.player)
-    const headHit = distance(nextPlayerPos, nextAiPos) <= COLLISION_RADIUS * 2
+      this.extendSegment(this.player, nextPlayerPos)
+      this.extendSegment(this.ai, nextAiPos)
 
-    if (headHit || (playerHit && aiHit)) {
-      this.spawnExplosion(nextPlayerPos, this.player.color)
-      this.spawnExplosion(nextAiPos, this.ai.color)
-      this.crashTimers.player = CRASH_FLASH_DURATION
-      this.crashTimers.ai = CRASH_FLASH_DURATION
-      this.crashed.player = true
-      this.crashed.ai = true
-      this.endRound('tie')
-    } else if (playerHit) {
-      this.spawnExplosion(nextPlayerPos, this.player.color)
-      this.crashTimers.player = CRASH_FLASH_DURATION
-      this.crashed.player = true
-      this.startWallShrink('player')
-      this.endRound('ai')
-    } else if (aiHit) {
-      this.spawnExplosion(nextAiPos, this.ai.color)
-      this.crashTimers.ai = CRASH_FLASH_DURATION
-      this.crashed.ai = true
-      this.startWallShrink('ai')
-      this.endRound('player')
+      const playerHit = this.checkCollision(nextPlayerPos, this.player, this.ai)
+      const aiHit = this.checkCollision(nextAiPos, this.ai, this.player)
+      const headHit = distance(nextPlayerPos, nextAiPos) <= COLLISION_RADIUS * 2
+
+      if (headHit || (playerHit && aiHit)) {
+        this.spawnExplosion(nextPlayerPos, this.player.color)
+        this.spawnExplosion(nextAiPos, this.ai.color)
+        this.crashTimers.player = CRASH_FLASH_DURATION
+        this.crashTimers.ai = CRASH_FLASH_DURATION
+        this.crashed.player = true
+        this.crashed.ai = true
+        this.endRound('tie')
+        return
+      }
+      if (playerHit) {
+        this.spawnExplosion(nextPlayerPos, this.player.color)
+        this.crashTimers.player = CRASH_FLASH_DURATION
+        this.crashed.player = true
+        this.startWallShrink('player')
+        this.endRound('ai')
+        return
+      }
+      if (aiHit) {
+        this.spawnExplosion(nextAiPos, this.ai.color)
+        this.crashTimers.ai = CRASH_FLASH_DURATION
+        this.crashed.ai = true
+        this.startWallShrink('ai')
+        this.endRound('player')
+        return
+      }
     }
   }
 
@@ -542,40 +605,9 @@ export class TronEngine {
     }
     const flashAlpha = this.crashed[player.id] ? Math.max(0, timer / CRASH_FLASH_DURATION) : 0
 
-    if (player.id === 'player' && this.playerImage) {
-      const img = this.playerImage
-      const scale = 0.055
-      const w = img.width * scale
-      const h = img.height * scale
-      const fadeAlpha = this.crashed[player.id] ? Math.max(0, flashAlpha) : 1
-      ctx.globalAlpha = fadeAlpha
-      ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
-      if (flashAlpha > 0) {
-        ctx.globalAlpha = flashAlpha
-        ctx.globalCompositeOperation = 'screen'
-        ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.globalAlpha = 1
-      } else {
-        ctx.globalAlpha = 1
-      }
-    } else if (player.id === 'ai' && this.aiImage) {
-      const img = this.aiImage
-      const scale = 0.055
-      const w = img.width * scale
-      const h = img.height * scale
-      const fadeAlpha = this.crashed[player.id] ? Math.max(0, flashAlpha) : 1
-      ctx.globalAlpha = fadeAlpha
-      ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
-      if (flashAlpha > 0) {
-        ctx.globalAlpha = flashAlpha
-        ctx.globalCompositeOperation = 'screen'
-        ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.globalAlpha = 1
-      } else {
-        ctx.globalAlpha = 1
-      }
+    const sprite = player.id === 'player' ? this.playerImage : this.aiImage
+    if (sprite) {
+      this.drawCycleSprite(sprite, this.crashed[player.id], flashAlpha)
     } else {
       ctx.fillStyle = player.color
       ctx.beginPath()
@@ -599,6 +631,27 @@ export class TronEngine {
       }
     }
     ctx.restore()
+  }
+
+  private drawCycleSprite(
+    img: HTMLImageElement,
+    crashed: boolean,
+    flashAlpha: number,
+  ) {
+    const ctx = this.ctx
+    const scale = 0.055
+    const w = img.width * scale
+    const h = img.height * scale
+    const fadeAlpha = crashed ? Math.max(0, flashAlpha) : 1
+    ctx.globalAlpha = fadeAlpha
+    ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
+    if (flashAlpha > 0) {
+      ctx.globalAlpha = flashAlpha
+      ctx.globalCompositeOperation = 'screen'
+      ctx.drawImage(img, -w * 0.5, -h * 0.5, w, h)
+      ctx.globalCompositeOperation = 'source-over'
+    }
+    ctx.globalAlpha = 1
   }
 
   private spawnExplosion(position: Vec, color: string) {
