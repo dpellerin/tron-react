@@ -59,5 +59,4 @@ npm test
 ## Deployment
 
 - The build uses a relative base path, so it works on GitHub Pages or any subdirectory host.
-- Live app: https://dpellerin.github.io/tron-react/
 - Run `npm run build` and publish the `dist/` folder.
