@@ -28,8 +28,9 @@ export function distancePointToSegment(p: Vec, a: Vec, b: Vec) {
   return distance(p, { x: a.x + abx * t, y: a.y + aby * t })
 }
 
-export function pointHitsSegments(point: Vec, segments: Segment[], radius: number) {
-  for (const segment of segments) {
+export function pointHitsSegments(point: Vec, segments: Segment[], radius: number, count = segments.length) {
+  for (let i = 0; i < count; i += 1) {
+    const segment = segments[i]
     if (distancePointToSegment(point, segment.a, segment.b) <= radius) {
       return true
     }

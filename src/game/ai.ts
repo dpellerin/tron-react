@@ -1,12 +1,11 @@
-import type { Segment, Vec } from './collision'
+import { distance, distancePointToSegment, pointHitsSegments, type Segment, type Vec } from './collision'
 import {
   buildOccupiedGrid,
-  canReach,
   cellOnRay,
   computeTerritory,
-  floodReachable,
   indexOf,
   rayClearance,
+  reachableInfo,
   stepCell,
   wallNeighborCount,
   type Cell,
@@ -28,6 +27,7 @@ export type DifficultyConfig = {
 }
 
 export const AI_CELL_SIZE = 24
+export const AI_TURN_COMMIT_DISTANCE = AI_CELL_SIZE * 2
 
 export const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
   easy: {
@@ -72,6 +72,8 @@ export type AiSnapshot = {
   width: number
   height: number
   speed: number
+  distanceSinceTurn?: number
+  lastTurnRotation?: number
   ai: CycleView
   player: CycleView
   wouldCollide: (point: Vec) => boolean
@@ -114,7 +116,7 @@ export function chooseAiDirection(
   const candidates: Candidate[] = []
 
   for (const move of legalMoves(aiDir)) {
-    const probe = survivalProbe(snapshot, move)
+    const probe = survivalProbe(snapshot, move, config.decisionInterval)
     const stepped = stepCell(aiCell, move, occupied, gridW, gridH)
     if (probe.hit || !stepped) {
       candidates.push({
@@ -138,13 +140,17 @@ export function chooseAiDirection(
       playerDir,
       playerClearBefore,
       config,
-      depthLeft: config.lookahead - 1,
     })
 
     const turning = move.x !== aiDir.x || move.y !== aiDir.y
     let score = evaluated.score
     if (turning) {
       score -= config.minTurnBenefit
+    }
+    if (config.lookahead > 1 && predictedCollision(snapshot, move, config.decisionInterval)) {
+      // The player may turn, so treat a predicted collision as a strong warning,
+      // not an absolute rejection of an otherwise safe escape.
+      score -= 1000
     }
     score += (rng() - 0.5) * 2 * config.randomness
 
@@ -183,6 +189,17 @@ export function chooseAiDirection(
       best = candidate
     }
   }
+
+  // A quick turn in the same rotational direction can be a useful U-turn.
+  // Only suppress a rapid reversal of turn direction (left-right zigzags).
+  const forward = living.find((candidate) => candidate.dir.x === aiDir.x && candidate.dir.y === aiDir.y)
+  const rotation = aiDir.x * best.dir.y - aiDir.y * best.dir.x
+  if (forward && rotation !== 0 && rotation === -(snapshot.lastTurnRotation ?? 0) &&
+    (snapshot.distanceSinceTurn ?? Infinity) < AI_TURN_COMMIT_DISTANCE &&
+    forward.space >= 3 && !(maxSpace >= 10 && forward.space < maxSpace * 0.2) &&
+    !(config.lookahead > 1 && predictedCollision(snapshot, aiDir, config.decisionInterval))) {
+    return gridDirToVec(aiDir)
+  }
   return gridDirToVec(best.dir)
 }
 
@@ -197,48 +214,19 @@ type EvalArgs = {
   playerDir: Vec
   playerClearBefore: number
   config: DifficultyConfig
-  depthLeft: number
 }
 
 function evaluateAfterStep(args: EvalArgs): { score: number; space: number } {
   const nextOccupied = args.occupied.slice()
   nextOccupied[indexOf(args.aiFrom.x, args.aiFrom.y, args.gridW)] = 1
 
-  if (args.depthLeft > 0) {
-    let bestScore = Number.NEGATIVE_INFINITY
-    let bestSpace = 0
-    let found = false
-    for (const move of legalMoves(args.aiDir)) {
-      const stepped = stepCell(args.aiTo, move, nextOccupied, args.gridW, args.gridH)
-      if (!stepped) {
-        continue
-      }
-      const child = evaluateAfterStep({
-        ...args,
-        occupied: nextOccupied,
-        aiFrom: args.aiTo,
-        aiTo: stepped,
-        aiDir: move,
-        depthLeft: args.depthLeft - 1,
-      })
-      found = true
-      if (child.score > bestScore) {
-        bestScore = child.score
-        bestSpace = child.space
-      }
-    }
-    if (found) {
-      return { score: bestScore, space: bestSpace }
-    }
-  }
-
   return scorePosition(nextOccupied, args)
 }
 
 function scorePosition(occupied: Uint8Array, args: EvalArgs): { score: number; space: number } {
   const { gridW, gridH, aiTo, aiDir, playerCell, playerDir, config } = args
-  const space = floodReachable(occupied, gridW, gridH, aiTo)
-  const disconnected = !canReach(occupied, gridW, gridH, aiTo, playerCell)
+  const { space, reachesGoal } = reachableInfo(occupied, gridW, gridH, aiTo, playerCell)
+  const disconnected = !reachesGoal
   const wallHug = wallNeighborCount(occupied, gridW, gridH, aiTo, aiDir)
 
   if (disconnected) {
@@ -269,9 +257,9 @@ function scorePosition(occupied: Uint8Array, args: EvalArgs): { score: number; s
   }
 }
 
-function survivalProbe(snapshot: AiSnapshot, dir: Vec) {
+function survivalProbe(snapshot: AiSnapshot, dir: Vec, decisionInterval: number) {
   const step = 4
-  const maxDist = Math.max(AI_CELL_SIZE, snapshot.speed * 0.1)
+  const maxDist = Math.max(AI_CELL_SIZE, snapshot.speed * (decisionInterval + 0.05))
   let distance = 0
   while (distance < maxDist) {
     distance += step
@@ -284,6 +272,24 @@ function survivalProbe(snapshot: AiSnapshot, dir: Vec) {
     }
   }
   return { hit: false, distance: maxDist }
+}
+
+// Simulate both heads over the next decision interval. The player is assumed
+// to continue straight; this is a warning, since their next input is unknown.
+function predictedCollision(snapshot: AiSnapshot, dir: Vec, interval: number) {
+  const steps = Math.max(1, Math.ceil(snapshot.speed * interval / 4))
+  const start = snapshot.player.pos
+  for (let i = 1; i <= steps; i += 1) {
+    const travel = snapshot.speed * interval * i / steps
+    const player = { x: start.x + snapshot.player.dir.x * travel, y: start.y + snapshot.player.dir.y * travel }
+    const ai = { x: snapshot.ai.pos.x + dir.x * travel, y: snapshot.ai.pos.y + dir.y * travel }
+    // Do not extrapolate a player who would already have crashed.
+    if (player.x <= 6 || player.y <= 6 || player.x >= snapshot.width - 6 || player.y >= snapshot.height - 6 ||
+      pointHitsSegments(player, snapshot.ai.segments, 6) ||
+      pointHitsSegments(player, snapshot.player.segments, 6, Math.max(0, snapshot.player.segments.length - 2))) break
+    if (distance(ai, player) <= 10 || distancePointToSegment(ai, start, player) <= 6) return true
+  }
+  return false
 }
 
 function legalMoves(dir: Vec): Vec[] {

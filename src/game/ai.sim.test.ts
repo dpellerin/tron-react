@@ -113,7 +113,7 @@ describe('spawn simulation', () => {
     },
   )
 
-  it('hard lasts at least as long as a no-turn dummy against a straight player', () => {
+  it('hard avoids losing alone in the opening against a straight player', () => {
     const hard = play('hard', 12)
     expect(hard.aiHit && !hard.playerHit).toBe(false)
   })

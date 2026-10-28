@@ -106,9 +106,12 @@ export class TronEngine {
   private running = false
   private rafId: number | null = null
   private lastTime = 0
+  private needsRender = true
   private speed = 0
   private speedTimer = 0
   private aiDecisionTimer = 0
+  private aiDistanceSinceTurn = Infinity
+  private aiLastTurnRotation = 0
   private paused = false
   private explosions: Explosion[] = []
   private crashTimers: Record<'player' | 'ai', number> = { player: 0, ai: 0 }
@@ -148,12 +151,14 @@ export class TronEngine {
     playerImg.src = new URL('../assets/player_sprite.png', import.meta.url).toString()
     playerImg.onload = () => {
       this.playerImage = playerImg
+      this.needsRender = true
     }
 
     const aiImg = new Image()
     aiImg.src = new URL('../assets/ai_sprite.png', import.meta.url).toString()
     aiImg.onload = () => {
       this.aiImage = aiImg
+      this.needsRender = true
     }
   }
 
@@ -197,6 +202,7 @@ export class TronEngine {
     }
     if (!this.arenaLocked) {
       this.tuning = { ...this.desiredTuning }
+      this.needsRender = true
     }
   }
 
@@ -270,9 +276,12 @@ export class TronEngine {
   }
 
   private resetRoundState() {
+    this.needsRender = true
     this.speed = this.tuning.baseSpeed
     this.speedTimer = 0
     this.aiDecisionTimer = 0
+    this.aiDistanceSinceTurn = Infinity
+    this.aiLastTurnRotation = 0
     this.running = false
     this.paused = false
     this.crashed.player = false
@@ -322,8 +331,14 @@ export class TronEngine {
     const loop = (time: number) => {
       const delta = Math.min((time - this.lastTime) / 1000, 0.05)
       this.lastTime = time
+      const animating = (this.running && !this.paused) || this.explosions.length > 0 ||
+        this.crashTimers.player > 0 || this.crashTimers.ai > 0 ||
+        this.wallShrink.player.active || this.wallShrink.ai.active
       this.update(delta)
-      this.render()
+      if (animating || this.needsRender) {
+        this.render()
+        this.needsRender = false
+      }
       this.rafId = requestAnimationFrame(loop)
     }
     this.rafId = requestAnimationFrame(loop)
@@ -368,6 +383,7 @@ export class TronEngine {
 
       this.extendSegment(this.player, nextPlayerPos)
       this.extendSegment(this.ai, nextAiPos)
+      this.aiDistanceSinceTurn += stepDistance
 
       const playerHit = this.checkCollision(nextPlayerPos, this.player, this.ai)
       const aiHit = this.checkCollision(nextAiPos, this.ai, this.player)
@@ -416,6 +432,8 @@ export class TronEngine {
         width: this.width,
         height: this.height,
         speed: this.speed,
+        distanceSinceTurn: this.aiDistanceSinceTurn,
+        lastTurnRotation: this.aiLastTurnRotation,
         ai: this.ai,
         player: this.player,
         wouldCollide: (point) => this.checkCollision(point, this.ai, this.player),
@@ -444,8 +462,8 @@ export class TronEngine {
     }
 
     if (self.segments.length > 2) {
-      const selfSegments = self.segments.slice(0, -2) // ignore current growing + most recent completed turn
-      if (pointHitsSegments(point, selfSegments, radius)) {
+      // Ignore the current growing segment and the most recent completed turn.
+      if (pointHitsSegments(point, self.segments, radius, self.segments.length - 2)) {
         return true
       }
     }
@@ -454,6 +472,11 @@ export class TronEngine {
   }
 
   private applyDirection(player: PlayerState, dir: Vec) {
+    this.needsRender = true
+    if (player.id === 'ai') {
+      this.aiLastTurnRotation = player.dir.x * dir.y - player.dir.y * dir.x
+      this.aiDistanceSinceTurn = 0
+    }
     player.dir = dir
     player.segments.push({
       a: { ...player.pos },

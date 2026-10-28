@@ -2,141 +2,99 @@ import type { Segment, Vec } from './collision'
 
 export type Cell = { x: number; y: number }
 
-const OWNER_AI = 1
-const OWNER_PLAYER = 2
-const OWNER_TIE = 3
-
 export function indexOf(x: number, y: number, w: number) {
   return y * w + x
 }
 
+// Independent distance maps allow both searches to pass through contested cells.
 export function computeTerritory(
-  occupied: Uint8Array,
-  w: number,
-  h: number,
-  ai: Cell,
-  player: Cell,
+  occupied: Uint8Array, w: number, h: number, ai: Cell, player: Cell,
 ) {
-  const owner = new Uint8Array(w * h)
-  const dist = new Int16Array(w * h)
-  dist.fill(-1)
-
-  const queue = new Int32Array(w * h * 2)
-  let head = 0
-  let tail = 0
-
-  const enqueue = (x: number, y: number, who: number, d: number) => {
-    if (x < 0 || y < 0 || x >= w || y >= h) {
-      return
-    }
-    const i = indexOf(x, y, w)
-    if (dist[i] === -1) {
-      dist[i] = d
-      owner[i] = who
-      queue[tail++] = i
-      return
-    }
-    if (dist[i] === d && owner[i] !== who && owner[i] !== OWNER_TIE) {
-      owner[i] = OWNER_TIE
-    }
-  }
-
-  enqueue(ai.x, ai.y, OWNER_AI, 0)
-  enqueue(player.x, player.y, OWNER_PLAYER, 0)
-
-  while (head < tail) {
-    const i = queue[head++]
-    if (owner[i] === OWNER_TIE) {
-      continue
-    }
-    const x = i % w
-    const y = (i / w) | 0
-    const nextDist = dist[i] + 1
-    const who = owner[i]
-    visitNeighbor(x + 1, y)
-    visitNeighbor(x - 1, y)
-    visitNeighbor(x, y + 1)
-    visitNeighbor(x, y - 1)
-
-    function visitNeighbor(nx: number, ny: number) {
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
-        return
-      }
-      const ni = indexOf(nx, ny, w)
-      if (occupied[ni] && !(nx === ai.x && ny === ai.y) && !(nx === player.x && ny === player.y)) {
-        return
-      }
-      enqueue(nx, ny, who, nextDist)
-    }
-  }
-
+  const aiDist = distances(occupied, w, h, ai, player)
+  const playerDist = distances(occupied, w, h, player, ai)
   let aiCells = 0
   let playerCells = 0
   let contested = 0
-  for (let i = 0; i < owner.length; i += 1) {
-    if (owner[i] === OWNER_AI) aiCells += 1
-    else if (owner[i] === OWNER_PLAYER) playerCells += 1
-    else if (owner[i] === OWNER_TIE) contested += 1
+  for (let i = 0; i < aiDist.length; i += 1) {
+    const a = aiDist[i]
+    const b = playerDist[i]
+    if (a < 0 && b < 0) continue
+    if (b < 0 || (a >= 0 && a < b)) aiCells += 1
+    else if (a < 0 || b < a) playerCells += 1
+    else contested += 1
   }
-
   return { ai: aiCells, player: playerCells, contested, diff: aiCells - playerCells }
 }
 
-export function floodReachable(occupied: Uint8Array, w: number, h: number, start: Cell) {
-  return walkFrom(occupied, w, h, start, null)
-}
-
-export function canReach(occupied: Uint8Array, w: number, h: number, start: Cell, goal: Cell) {
-  return walkFrom(occupied, w, h, start, goal) >= 0
-}
-
-function walkFrom(
-  occupied: Uint8Array,
-  w: number,
-  h: number,
-  start: Cell,
-  goal: Cell | null,
-) {
-  if (start.x < 0 || start.y < 0 || start.x >= w || start.y >= h) {
-    return goal ? -1 : 0
-  }
-  const seen = new Uint8Array(w * h)
+function distances(occupied: Uint8Array, w: number, h: number, start: Cell, other: Cell) {
+  const dist = new Int32Array(w * h)
+  dist.fill(-1)
+  if (start.x < 0 || start.y < 0 || start.x >= w || start.y >= h) return dist
   const queue = new Int32Array(w * h)
   let head = 0
   let tail = 0
-  const startIndex = indexOf(start.x, start.y, w)
-  seen[startIndex] = 1
-  queue[tail++] = startIndex
-  let count = 0
-
+  const first = indexOf(start.x, start.y, w)
+  dist[first] = 0
+  queue[tail++] = first
   while (head < tail) {
     const i = queue[head++]
     const x = i % w
     const y = (i / w) | 0
-    if (goal && x === goal.x && y === goal.y) {
-      return count + 1
+    visit(x + 1, y)
+    visit(x - 1, y)
+    visit(x, y + 1)
+    visit(x, y - 1)
+    function visit(nx: number, ny: number) {
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) return
+      const ni = indexOf(nx, ny, w)
+      if (dist[ni] >= 0 || (occupied[ni] && !(nx === other.x && ny === other.y))) return
+      dist[ni] = dist[i] + 1
+      queue[tail++] = ni
     }
-    count += 1
-    push(x + 1, y)
-    push(x - 1, y)
-    push(x, y + 1)
-    push(x, y - 1)
   }
+  return dist
+}
 
-  return goal ? -1 : count
-
-  function push(nx: number, ny: number) {
-    if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
-      return
-    }
-    const ni = indexOf(nx, ny, w)
-    const isGoal = Boolean(goal && nx === goal.x && ny === goal.y)
-    if (seen[ni] || (occupied[ni] && !isGoal)) {
-      return
-    }
-    seen[ni] = 1
-    queue[tail++] = ni
+// Count space and connectivity in one traversal. The other head is a reachable
+// goal even when its trail occupies the cell, but its trail is not traversable.
+export function reachableInfo(occupied: Uint8Array, w: number, h: number, start: Cell, goal: Cell) {
+  const seen = new Uint8Array(w * h)
+  const queue = new Int32Array(w * h)
+  if (start.x < 0 || start.y < 0 || start.x >= w || start.y >= h) {
+    return { space: 0, reachesGoal: false }
   }
+  let head = 0
+  let tail = 0
+  const first = indexOf(start.x, start.y, w)
+  seen[first] = 1
+  queue[tail++] = first
+  let reachesGoal = start.x === goal.x && start.y === goal.y
+  while (head < tail) {
+    const i = queue[head++]
+    const x = i % w
+    const y = (i / w) | 0
+    visit(x + 1, y)
+    visit(x - 1, y)
+    visit(x, y + 1)
+    visit(x, y - 1)
+    function visit(nx: number, ny: number) {
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) return
+      const ni = indexOf(nx, ny, w)
+      if (nx === goal.x && ny === goal.y) reachesGoal = true
+      if (seen[ni] || occupied[ni]) return
+      seen[ni] = 1
+      queue[tail++] = ni
+    }
+  }
+  return { space: tail, reachesGoal }
+}
+
+export function floodReachable(occupied: Uint8Array, w: number, h: number, start: Cell) {
+  return reachableInfo(occupied, w, h, start, { x: -1, y: -1 }).space
+}
+
+export function canReach(occupied: Uint8Array, w: number, h: number, start: Cell, goal: Cell) {
+  return reachableInfo(occupied, w, h, start, goal).reachesGoal
 }
 
 export function rayClearance(
